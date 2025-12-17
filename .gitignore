@@ -29,3 +29,8 @@ data/**/images/
 
 # OS files
 .DS_Store
+
+# Accidental pip / version folders
+=0.*/
+=1.*/
+
