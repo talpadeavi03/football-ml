@@ -1,0 +1,31 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual env / local configs
+.env
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.tflite
+
+# Training / runtime outputs
+runs/
+*.mp4
+training_output.log
+
+# Datasets
+data/datasets/
+data/**/images/
+
+# Binary blobs
+*.npy
+
+# Accidental pip cache folders
+=0.*/
+=1.*/
+
+# OS files
+.DS_Store

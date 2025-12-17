@@ -1,0 +1,8 @@
+opencv-python
+numpy
+deepface
+tf-keras
+ultralytics
+scikit-learn
+filterpy
+lap
