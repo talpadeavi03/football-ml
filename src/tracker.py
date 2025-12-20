@@ -1,79 +1,115 @@
-from ultralytics import YOLO
+# src/tracker.py
+
 import cv2
-import numpy as np
+from ultralytics import YOLO
+
+# 🔒 EXACTLY TWO COLORS — NEVER CHANGE
+TEAM_COLORS = {
+    'Team A': (255, 0, 0),   # Team A (Blue)
+    'Team B': (0, 0, 255)    # Team B (Red)
+}
+
 
 class Tracker:
-    # FIX 1: Hardcode the correct model path to guarantee use of trained weights.
     def __init__(self):
-        """
-        Initializes the YOLOv8 tracker using the custom-trained weights.
-        """
-        model_path = 'football_mobile_project/yolov8n_mobile/weights/best.pt'
-        
-        print(f"Loading YOLO model from {model_path}...")
-        self.model = YOLO(model_path)
-        self.class_names = self.model.names
-        print(f"Classes: {self.class_names}")
+        self.model = YOLO(
+            "football_mobile_project/yolov8n_mobile/weights/best.pt"
+        )
+        # Fallback for ball detection if custom model fails
+        self.fallback_model = YOLO("yolov8n.pt")
 
     def track_objects(self, frame):
-        """
-        Runs tracking on the frame.
-        """
-        results = self.model.track(frame, persist=True, verbose=False)
+        results = self.model.track(
+            frame,
+            persist=True,
+            conf=0.15,
+            iou=0.5,
+            verbose=False
+        )
+
         detections = []
-        
-        if results and len(results) > 0:
-            result = results[0]
+
+        if not results or results[0].boxes is None:
+            return detections
+
+        boxes = results[0].boxes
+        untracked_count = 0
+
+        for box in boxes:
+            cls = int(box.cls.item())
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
             
-            if result.boxes:
-                for box in result.boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    track_id = int(box.id[0].cpu().numpy()) if box.id is not None else -1
-                    cls_id = int(box.cls[0].cpu().numpy())
-                    cls_name = self.class_names[cls_id]
-                    conf = float(box.conf[0].cpu().numpy())
-                    
-                    # FIX 2: Filter for the custom classes: 0: ball, 1: player, 2: referee, 3: goalkeeper
-                    if cls_id in [0, 1, 2, 3]:
+            if box.id is not None:
+                track_id = int(box.id.item())
+            else:
+                # Assign a temporary unique ID for this frame
+                untracked_count += 1
+                track_id = -100 - untracked_count
+
+            cx = (x1 + x2) // 2
+            cy = (y1 + y2) // 2
+            label = self.model.names[cls]
+
+            detections.append({
+                "id": track_id,
+                "class": label,
+                "bbox": (x1, y1, x2, y2),
+                "center": (cx, cy)
+            })
+
+        # --- FALLBACK FOR BALL ---
+        has_ball = any(d["class"] == "ball" for d in detections)
+        if not has_ball:
+            fb_results = self.fallback_model.predict(frame, conf=0.05, verbose=False)
+            if fb_results and fb_results[0].boxes:
+                for box in fb_results[0].boxes:
+                    cls = int(box.cls.item())
+                    if cls == 32: # 'sports ball'
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
                         detections.append({
-                            'id': track_id,
-                            'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                            'class': cls_name,
-                            'conf': conf,
-                            'center': [int((x1+x2)/2), int((y1+y2)/2)]
+                            "id": -1,
+                            "class": "ball",
+                            "bbox": (x1, y1, x2, y2),
+                            "center": ((x1+x2)//2, (y1+y2)//2)
                         })
-                        
+                        break
+
         return detections
 
-    def draw_annotations(self, frame, detections, team_assignments=None):
+    def draw_annotations(self, frame, detections, team_assignments):
         """
-        Draws bounding boxes and IDs on the frame.
+        Draw ONLY confirmed team players.
+        NO third color is possible.
         """
-        annotated_frame = frame.copy()
-        
-        for det in detections:
-            x1, y1, x2, y2 = det['bbox']
-            color = (0, 255, 0) # Default Green
-            label = f"{det['class']} | ID {det['id']}"
-            
-            # Handle Ball detection
-            if det['class'] == 'ball':
-                color = (0, 165, 255) # Orange
-                label = "Ball"
-            
-            # Handle Player/Referee
-            elif team_assignments and det['id'] in team_assignments:
-                team = team_assignments[det['id']]
-                if team == 'Team A':
-                    color = (255, 0, 0) # Blue
-                elif team == 'Team B':
-                    color = (0, 0, 255) # Red
-                
-                name = det.get('name', 'NA')
-                label = f"{team} | {name}"
 
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(annotated_frame, label, (x1, y1 - 10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            
-        return annotated_frame
+        annotated = frame.copy()
+
+        for det in detections:
+            if det['class'] != 'player':
+                continue
+
+            pid = det['id']
+
+            # ❌ DO NOT DRAW if no team
+            if pid not in team_assignments:
+                continue
+
+            team_id = team_assignments[pid]
+
+            # ❌ SAFETY CHECK
+            if team_id not in TEAM_COLORS:
+                continue
+
+            color = TEAM_COLORS[team_id]
+
+            x1, y1, x2, y2 = det['bbox']
+
+            cv2.rectangle(
+                annotated,
+                (x1, y1),
+                (x2, y2),
+                color,
+                2
+            )
+
+        return annotated

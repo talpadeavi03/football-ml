@@ -1,57 +1,91 @@
+# src/team_classifier.py
+
+import math
+
+
 class TeamClassifier:
-    def __init__(self):
-        self.player_teams = {} # Map track_id -> team_name
-        
-        # Explicit Name Mapping
-        self.name_map = {
-            'amol': 'Team A',
-            'Vitekar': 'Team A',
-            'harshal': 'Team A',
-            'shreyas': 'Team B',
-            'tejas': 'Team B'
-        }
+    def __init__(self, init_frames=100):
+        self.init_frames = init_frames
+        self.player_team = {}   # player_id -> team_id
+        self.locked = False
+        self.init_positions = [] # Store (pid, x) during init
 
-    def assign_teams(self, detections, frame_width, frame_idx):
+    def assign_teams(self, detections, frame, frame_idx, identity_manager=None):
         """
-        Assigns teams based on position.
-        The half-line logic is used persistently to assign teams to ANY new, unassigned player.
+        Assign teams using median split during init, then centroids.
         """
-        half_line_x = frame_width / 2
+        team_assignments = {}
         
+        # 1. Collect positions during init
+        if not self.locked:
+            for det in detections:
+                if det['class'] in ['player', 'goalkeeper']:
+                    self.init_positions.append(det['center'][0])
+            
+            if frame_idx >= self.init_frames:
+                self.locked = True
+                if self.init_positions:
+                    self.median_x = sum(self.init_positions) / len(self.init_positions)
+                else:
+                    self.median_x = frame.shape[1] / 2
+
+        # 2. Collect current team centroids for post-lock assignment
+        team_centers = {'Team A': [], 'Team B': []}
         for det in detections:
-            # Only consider players and goalkeepers for team assignment
-            if det['class'] not in ['player', 'goalkeeper']:
-                continue
+            pid = det['id']
             
-            track_id = det['id']
-            if track_id == -1:
+            # Recover from ReID
+            if identity_manager:
+                identity = identity_manager.get_identity(pid)
+                if identity and identity.get("team_id"):
+                    self.player_team[pid] = identity["team_id"]
+
+            if pid in self.player_team:
+                team_id = self.player_team[pid]
+                team_centers[team_id].append(det['center'])
+
+        team_centroid = {}
+        for tid, centers in team_centers.items():
+            if centers:
+                team_centroid[tid] = (
+                    sum(c[0] for c in centers) / len(centers),
+                    sum(c[1] for c in centers) / len(centers)
+                )
+
+        # 3. Assign teams to current detections
+        for det in detections:
+            if det['class'] not in ['player', 'goalkeeper', 'referee']:
                 continue
-                
-            # --- FIX: Only assign team if the player is NOT already in the dictionary ---
-            if track_id in self.player_teams:
+
+            pid = det['id']
+            if pid in self.player_team:
+                team_assignments[pid] = self.player_team[pid]
                 continue
-            
-            # Assign team based on position (INITIAL ASSIGNMENT for ANY new ID)
-            center_x = det['center'][0]
-            
-            # We assume Team A starts on the left side of the screen
-            if center_x < half_line_x:
-                self.player_teams[track_id] = 'Team A'
+
+            cx, cy = det['center']
+
+            if not self.locked:
+                # Use current frame's position relative to center for now
+                if cx < frame.shape[1] / 2:
+                    team_id = 'Team A'
+                else:
+                    team_id = 'Team B'
             else:
-                self.player_teams[track_id] = 'Team B'
-                
-        return self.player_teams
+                # Use centroids if available
+                if team_centroid:
+                    dists = {tid: math.dist((cx, cy), c) for tid, c in team_centroid.items()}
+                    team_id = min(dists, key=dists.get)
+                else:
+                    team_id = 'Team A' if cx < self.median_x else 'Team B'
 
-    def update_player(self, track_id, name):
-        """
-        Updates the team of a player based on their recognized name.
-        Overrides existing assignment.
-        """
-        for key, team in self.name_map.items():
-            if key.lower() in name.lower():
-                self.player_teams[track_id] = team
-                print(f"Updated Player {track_id} ({name}) to {team}")
-                return
+            self.player_team[pid] = team_id
+            team_assignments[pid] = team_id
 
-    def get_team(self, track_id):
-        return self.player_teams.get(track_id, "Unknown")
+        return team_assignments
+
+    def get_team(self, player_id):
+        return self.player_team.get(player_id, None)
+
+    def update_player(self, player_id, name):
+        # Names do not affect team
+        return
