@@ -4,33 +4,31 @@ __pycache__/
 
 # Virtual env / local configs
 .env
+.venv/
 
-# Model weights
-*.pt
-*.pth
-*.onnx
-*.tflite
+# Model weights (Keep these in models/ if small, but ignore generic ones)
+# *.pt
+# *.onnx
+# *.tflite
 
 # Training / runtime outputs
-runs/
-*.mp4
-training_output.log
+**/runs/
+**/*.mp4
+**/*.log
+ml/training/training_output.log
+ml/training/tree.txt
 
 # Datasets
-data/datasets/
-data/**/images/
+**/data/
+ml/training/data/
 
 # Binary blobs
-*.npy
-
-# Accidental pip cache folders
-=0.*/
-=1.*/
+**/*.npy
 
 # OS files
 .DS_Store
 
-# Accidental pip / version folders
-=0.*/
-=1.*/
+# IDEs
+.vscode/
+.idea/
 
